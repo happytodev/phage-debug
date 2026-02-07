@@ -70,17 +70,13 @@ class Debug
     }
 
     /**
-     * Dump a variable (like var_dump but formatted)
+     * Dump a variable (like var_dump but formatted with expandable structures)
      */
     public static function dump(...$vars): void
     {
         $dumps = [];
         foreach ($vars as $var) {
-            $dumps[] = [
-                'type' => gettype($var),
-                'value' => self::format($var),
-                'dump' => print_r($var, true),
-            ];
+            $dumps[] = self::toDetailedStructure($var);
         }
 
         self::send('dump', [
@@ -195,7 +191,7 @@ class Debug
     }
 
     /**
-     * Format value for display
+     * Format value for display (simple string format)
      */
     private static function format($value): string
     {
@@ -223,6 +219,138 @@ class Debug
         }
 
         return (string)$value;
+    }
+
+    /**
+     * Recursively convert value to a detailed structure for UI display
+     * Supports collapsible arrays and objects
+     */
+    private static function toDetailedStructure($value, int $depth = 0, int $maxDepth = 10): array
+    {
+        if ($depth > $maxDepth) {
+            return [
+                'type' => 'string',
+                'value' => '[Max depth reached]',
+                'isExpandable' => false,
+            ];
+        }
+
+        if ($value === null) {
+            return [
+                'type' => 'null',
+                'value' => 'null',
+                'isExpandable' => false,
+            ];
+        }
+
+        if (is_bool($value)) {
+            return [
+                'type' => 'boolean',
+                'value' => $value ? 'true' : 'false',
+                'isExpandable' => false,
+            ];
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return [
+                'type' => is_int($value) ? 'integer' : 'float',
+                'value' => (string)$value,
+                'isExpandable' => false,
+            ];
+        }
+
+        if (is_string($value)) {
+            $isLong = strlen($value) > 100;
+            return [
+                'type' => 'string',
+                'value' => $isLong ? substr($value, 0, 100) . '...' : $value,
+                'fullValue' => $isLong ? $value : null,
+                'isExpandable' => $isLong,
+            ];
+        }
+
+        if (is_array($value)) {
+            $items = [];
+            foreach ($value as $key => $item) {
+                $items[] = [
+                    'key' => (string)$key,
+                    'value' => self::toDetailedStructure($item, $depth + 1, $maxDepth),
+                ];
+            }
+
+            return [
+                'type' => 'array',
+                'count' => count($value),
+                'value' => 'array(' . count($value) . ')',
+                'isExpandable' => true,
+                'items' => $items,
+            ];
+        }
+
+        if (is_object($value)) {
+            if ($value instanceof \DateTime) {
+                return [
+                    'type' => 'object',
+                    'class' => 'DateTime',
+                    'value' => $value->format('Y-m-d H:i:s'),
+                    'isExpandable' => false,
+                ];
+            }
+
+            $reflection = new \ReflectionClass($value);
+            $properties = [];
+
+            foreach ($reflection->getProperties() as $prop) {
+                $prop->setAccessible(true);
+                try {
+                    $propValue = $prop->getValue($value);
+                    $properties[] = [
+                        'key' => $prop->getName(),
+                        'visibility' => $this->getVisibility($prop),
+                        'value' => self::toDetailedStructure($propValue, $depth + 1, $maxDepth),
+                    ];
+                } catch (\Exception $e) {
+                    $properties[] = [
+                        'key' => $prop->getName(),
+                        'visibility' => $this->getVisibility($prop),
+                        'value' => [
+                            'type' => 'error',
+                            'value' => $e->getMessage(),
+                            'isExpandable' => false,
+                        ],
+                    ];
+                }
+            }
+
+            return [
+                'type' => 'object',
+                'class' => get_class($value),
+                'value' => get_class($value) . '(' . count($properties) . ' properties)',
+                'isExpandable' => count($properties) > 0,
+                'properties' => $properties,
+            ];
+        }
+
+        // Fallback for other types
+        return [
+            'type' => gettype($value),
+            'value' => (string)$value,
+            'isExpandable' => false,
+        ];
+    }
+
+    /**
+     * Get visibility modifier for a reflection property
+     */
+    private function getVisibility(\ReflectionProperty $prop): string
+    {
+        if ($prop->isPublic()) {
+            return 'public';
+        }
+        if ($prop->isProtected()) {
+            return 'protected';
+        }
+        return 'private';
     }
 
     /**
