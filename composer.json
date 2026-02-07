@@ -1,0 +1,22 @@
+{
+    "name": "happytodev/phage-debug",
+    "description": "Phage Debug - Built-in debugging system for PHP development",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "HappyToDev",
+            "email": "contact@happytodev.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Phage\\Debug\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
