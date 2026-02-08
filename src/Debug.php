@@ -64,8 +64,13 @@ class Debug
      */
     public static function log(...$messages): void
     {
+        $dumps = [];
+        foreach ($messages as $msg) {
+            $dumps[] = self::toDetailedStructure($msg);
+        }
+
         self::send('log', [
-            'messages' => array_map(self::class . '::format', $messages),
+            'messages' => $dumps,
         ]);
     }
 
@@ -146,7 +151,7 @@ class Debug
     {
         self::send('table', [
             'label' => $label,
-            'data' => $data,
+            'data' => self::toDetailedStructure($data),
         ]);
     }
 
@@ -157,7 +162,7 @@ class Debug
     {
         self::send('json', [
             'label' => $label,
-            'json' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            'data' => self::toDetailedStructure($data),
         ]);
     }
 
@@ -180,8 +185,7 @@ class Debug
      */
     public static function trace(?string $label = null): void
     {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-        // Remove the trace() call itself
+        $trace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT);
         array_shift($trace);
 
         self::send('trace', [
@@ -306,13 +310,13 @@ class Debug
                     $propValue = $prop->getValue($value);
                     $properties[] = [
                         'key' => $prop->getName(),
-                        'visibility' => $this->getVisibility($prop),
+                        'visibility' => self::getVisibility($prop),
                         'value' => self::toDetailedStructure($propValue, $depth + 1, $maxDepth),
                     ];
                 } catch (\Exception $e) {
                     $properties[] = [
                         'key' => $prop->getName(),
-                        'visibility' => $this->getVisibility($prop),
+                        'visibility' => self::getVisibility($prop),
                         'value' => [
                             'type' => 'error',
                             'value' => $e->getMessage(),
@@ -342,7 +346,7 @@ class Debug
     /**
      * Get visibility modifier for a reflection property
      */
-    private function getVisibility(\ReflectionProperty $prop): string
+    private static function getVisibility(\ReflectionProperty $prop): string
     {
         if ($prop->isPublic()) {
             return 'public';
@@ -383,6 +387,40 @@ class Debug
     }
 
     /**
+     * Get caller information (file, line, function)
+     */
+    private static function getCallerInfo(): array
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        $debugFile = __FILE__;
+        
+        // Skip only the internal frames (getCallerInfo and send)
+        // Keep the first PUBLIC method call (like log(), dump(), exception(), etc.)
+        foreach ($trace as $frame) {
+            $func = $frame['function'] ?? '';
+            
+            // Skip getCallerInfo and send frames
+            if (in_array($func, ['getCallerInfo', 'send'], true)) {
+                continue;
+            }
+            
+            // Also skip if it's in Debug.php (internal implementation details)
+            if (isset($frame['file']) && $frame['file'] === $debugFile && in_array($func, ['sendAsync', 'sendSync', 'detectOrigin'], true)) {
+                continue;
+            }
+            
+            // This is the caller!
+            return [
+                'file' => $frame['file'] ?? 'unknown',
+                'line' => $frame['line'] ?? 0,
+                'method' => $func,
+            ];
+        }
+        
+        return ['file' => 'unknown', 'line' => 0, 'method' => 'unknown'];
+    }
+
+    /**
      * Send payload to the debug server
      */
     private static function send(string $type, array $data): void
@@ -393,11 +431,13 @@ class Debug
 
         $endpoint = self::$endpoint ?? self::$config['endpoint'];
         $origin = self::$origin ?? self::detectOrigin();
+        $caller = self::getCallerInfo();
 
         $payload = [
             'type' => $type,
             'timestamp' => (new \DateTime())->format(\DateTime::ATOM),
             'origin' => $origin,
+            'caller' => $caller,
             'data' => $data,
             'meta' => [
                 'php_version' => PHP_VERSION,
